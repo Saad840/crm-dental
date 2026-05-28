@@ -1,12 +1,16 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-// Deploy target: Vercel (via Nitro `vercel` preset).
-// Outputs to `.vercel/output` which Vercel auto-detects — no vercel.json needed.
+// Deploy target: Vercel Build Output API.
 export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
   nitro: {
     preset: "vercel",
+    output: {
+      dir: ".vercel/output",
+      publicDir: ".vercel/output/static",
+      serverDir: ".vercel/output/functions/__server.func",
+    },
   },
 });
