@@ -1,0 +1,1 @@
+ALTER TYPE public.clinic_status ADD VALUE IF NOT EXISTS 'Closed-Lost';

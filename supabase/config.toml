@@ -1,0 +1,4 @@
+project_id = "vfvrgiftupdbqhppoafs"
+
+[functions.handle-sheet-sync]
+verify_jwt = false
