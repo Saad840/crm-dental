@@ -86,32 +86,41 @@ export type Database = {
       outreach_timeline: {
         Row: {
           clinic_id: string
+          contact_detail: string | null
           created_at: string
           date_logged: string
           id: string
           notes: string | null
           outcome: string | null
           staff_id: string | null
+          target_kind: string | null
+          target_label: string | null
           type: string
         }
         Insert: {
           clinic_id: string
+          contact_detail?: string | null
           created_at?: string
           date_logged?: string
           id?: string
           notes?: string | null
           outcome?: string | null
           staff_id?: string | null
+          target_kind?: string | null
+          target_label?: string | null
           type: string
         }
         Update: {
           clinic_id?: string
+          contact_detail?: string | null
           created_at?: string
           date_logged?: string
           id?: string
           notes?: string | null
           outcome?: string | null
           staff_id?: string | null
+          target_kind?: string | null
+          target_label?: string | null
           type?: string
         }
         Relationships: [
@@ -222,6 +231,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      user_outreach_types: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          user_id?: string
+        }
+        Relationships: []
       }
     }
     Views: {

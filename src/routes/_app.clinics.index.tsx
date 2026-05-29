@@ -12,16 +12,32 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, ExternalLink } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Plus, Search, ExternalLink, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
 export const Route = createFileRoute("/_app/clinics/")({
-  head: () => ({ meta: [{ title: "Clinics — Dental CRM" }] }),
+  head: () => ({ meta: [{ title: "Clinics - Dental CRM" }] }),
   component: ClinicsList,
 });
 
 const STATUSES = ["New", "Researching", "Contacted", "In Discussion", "Closed-Won", "Closed-Lost"] as const;
+const DIRECTORY_COLUMNS = [
+  { key: "clinic", label: "Clinic" },
+  { key: "location", label: "Location" },
+  { key: "contact", label: "Contact" },
+  { key: "status", label: "Status" },
+  { key: "sync", label: "Sync" },
+  { key: "website", label: "Website" },
+  { key: "rating", label: "Rating" },
+  { key: "categories", label: "Categories" },
+  { key: "updated", label: "Updated" },
+] as const;
+type DirectoryColumn = typeof DIRECTORY_COLUMNS[number]["key"];
+const DEFAULT_COLUMNS: DirectoryColumn[] = ["clinic", "location", "contact", "status", "sync"];
+const COLUMN_STORAGE_KEY = "clinic-directory-columns";
 
 function statusColor(s: string) {
   return {
@@ -34,15 +50,29 @@ function statusColor(s: string) {
   }[s] ?? "";
 }
 
+function getInitialColumns() {
+  if (typeof window === "undefined") return DEFAULT_COLUMNS;
+  const raw = window.localStorage.getItem(COLUMN_STORAGE_KEY);
+  if (!raw) return DEFAULT_COLUMNS;
+  try {
+    const parsed = JSON.parse(raw) as DirectoryColumn[];
+    const valid = parsed.filter((c) => DIRECTORY_COLUMNS.some((col) => col.key === c));
+    return valid.length ? valid : DEFAULT_COLUMNS;
+  } catch {
+    return DEFAULT_COLUMNS;
+  }
+}
+
 function ClinicsList() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("all");
+  const [visibleColumns, setVisibleColumns] = useState<DirectoryColumn[]>(getInitialColumns);
   const { data, isLoading } = useQuery({
     queryKey: ["clinics"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("clinics")
-        .select("id,clinic_name,city,state,email_primary,phone_primary,status,last_synced_at,updated_at")
+        .select("id,clinic_name,city,state,email_primary,email_secondary,phone_primary,phone_secondary,status,last_synced_at,updated_at,website_url,google_rating,google_reviews_count,categories")
         .order("updated_at", { ascending: false });
       if (error) throw error;
       return data;
@@ -55,6 +85,13 @@ function ClinicsList() {
     const hay = `${c.clinic_name} ${c.city ?? ""} ${c.email_primary ?? ""}`.toLowerCase();
     return hay.includes(q.toLowerCase());
   });
+  const show = (column: DirectoryColumn) => visibleColumns.includes(column);
+  const setColumn = (column: DirectoryColumn, checked: boolean) => {
+    const next = checked ? [...visibleColumns, column] : visibleColumns.filter((c) => c !== column);
+    const safe = next.length ? next : ["clinic"];
+    setVisibleColumns(safe);
+    window.localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(safe));
+  };
 
   return (
     <div className="space-y-6 p-6 md:p-8">
@@ -69,9 +106,9 @@ function ClinicsList() {
       <Card>
         <CardContent className="p-4">
           <div className="mb-4 flex flex-wrap gap-2">
-            <div className="relative flex-1 min-w-[220px]">
+            <div className="relative min-w-[220px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input className="pl-9" placeholder="Search name, city, email…" value={q} onChange={(e) => setQ(e.target.value)} />
+              <Input className="pl-9" placeholder="Search name, city, email..." value={q} onChange={(e) => setQ(e.target.value)} />
             </div>
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
@@ -80,6 +117,22 @@ function ClinicsList() {
                 {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="gap-2"><SlidersHorizontal className="h-4 w-4" /> Columns</Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56">
+                <div className="space-y-2">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">Show fields</Label>
+                  {DIRECTORY_COLUMNS.map((column) => (
+                    <label key={column.key} className="flex cursor-pointer items-center gap-2 rounded-sm px-1 py-1 text-sm hover:bg-muted">
+                      <Checkbox checked={show(column.key)} onCheckedChange={(checked) => setColumn(column.key, checked === true)} />
+                      {column.label}
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
 
           {isLoading ? (
@@ -89,28 +142,38 @@ function ClinicsList() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Clinic</TableHead>
-                    <TableHead>Location</TableHead>
-                    <TableHead>Contact</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Sync</TableHead>
+                    {show("clinic") && <TableHead>Clinic</TableHead>}
+                    {show("location") && <TableHead>Location</TableHead>}
+                    {show("contact") && <TableHead>Contact</TableHead>}
+                    {show("status") && <TableHead>Status</TableHead>}
+                    {show("sync") && <TableHead>Sync</TableHead>}
+                    {show("website") && <TableHead>Website</TableHead>}
+                    {show("rating") && <TableHead>Rating</TableHead>}
+                    {show("categories") && <TableHead>Categories</TableHead>}
+                    {show("updated") && <TableHead>Updated</TableHead>}
                     <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.map((c) => (
                     <TableRow key={c.id}>
-                      <TableCell className="font-medium">{c.clinic_name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{[c.city, c.state].filter(Boolean).join(", ") || "—"}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{c.email_primary || c.phone_primary || "—"}</TableCell>
-                      <TableCell><Badge className={statusColor(c.status)} variant="secondary">{c.status}</Badge></TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {c.last_synced_at ? (
-                          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {formatDistanceToNow(new Date(c.last_synced_at), { addSuffix: true })}</span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-muted-foreground/40" /> Manual</span>
-                        )}
-                      </TableCell>
+                      {show("clinic") && <TableCell className="font-medium">{c.clinic_name}</TableCell>}
+                      {show("location") && <TableCell className="text-sm text-muted-foreground">{[c.city, c.state].filter(Boolean).join(", ") || "—"}</TableCell>}
+                      {show("contact") && <TableCell className="text-sm text-muted-foreground">{c.email_primary || c.email_secondary || c.phone_primary || c.phone_secondary || "—"}</TableCell>}
+                      {show("status") && <TableCell><Badge className={statusColor(c.status)} variant="secondary">{c.status}</Badge></TableCell>}
+                      {show("sync") && (
+                        <TableCell className="text-xs text-muted-foreground">
+                          {c.last_synced_at ? (
+                            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {formatDistanceToNow(new Date(c.last_synced_at), { addSuffix: true })}</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-muted-foreground/40" /> Manual</span>
+                          )}
+                        </TableCell>
+                      )}
+                      {show("website") && <TableCell className="text-sm text-muted-foreground">{c.website_url ? <a href={c.website_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">Open</a> : "—"}</TableCell>}
+                      {show("rating") && <TableCell className="text-sm text-muted-foreground">{c.google_rating ? `${c.google_rating} (${c.google_reviews_count ?? 0})` : "—"}</TableCell>}
+                      {show("categories") && <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground">{c.categories || "—"}</TableCell>}
+                      {show("updated") && <TableCell className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(c.updated_at), { addSuffix: true })}</TableCell>}
                       <TableCell className="text-right">
                         <Button asChild variant="ghost" size="sm">
                           <Link to="/clinics/$id" params={{ id: c.id }}>Open <ExternalLink className="ml-1 h-3 w-3" /></Link>
@@ -119,7 +182,7 @@ function ClinicsList() {
                     </TableRow>
                   ))}
                   {filtered.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">No clinics found.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={visibleColumns.length + 1} className="py-10 text-center text-sm text-muted-foreground">No clinics found.</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -148,7 +211,8 @@ function NewClinicDialog() {
     else {
       toast.success("Clinic added");
       setOpen(false);
-      setName(""); setCity("");
+      setName("");
+      setCity("");
       qc.invalidateQueries({ queryKey: ["clinics"] });
     }
   };

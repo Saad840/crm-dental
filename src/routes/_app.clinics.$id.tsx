@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ArrowLeft, Download, Plus, Save, Trash2, Star, ExternalLink, Pencil, Facebook, Instagram, Twitter, Youtube, Linkedin } from "lucide-react";
 import { toast } from "sonner";
 import { exportClinic } from "@/lib/export";
@@ -33,10 +34,12 @@ type Clinic = {
 const PLATFORMS = ["Facebook", "Instagram", "Twitter", "YouTube", "LinkedIn"] as const;
 type Platform = typeof PLATFORMS[number];
 const platformIcon: Record<Platform, typeof Facebook> = { Facebook, Instagram, Twitter, YouTube: Youtube, LinkedIn: Linkedin };
+const DEFAULT_OUTREACH_TYPES = ["Email", "Call", "LinkedIn", "Facebook", "Instagram", "WhatsApp"] as const;
 
 function ClinicDetail() {
   const { id } = Route.useParams();
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   const { data: clinic, isLoading } = useQuery({
     queryKey: ["clinic", id],
@@ -79,6 +82,7 @@ function ClinicDetail() {
           <Button variant="outline" onClick={async () => { try { await exportClinic(id); toast.success("Exported"); } catch (e) { toast.error((e as Error).message); } }}>
             <Download className="mr-2 h-4 w-4" /> Export Full Clinic History
           </Button>
+          <DeleteClinicDialog clinicId={id} clinicName={form.clinic_name} onDeleted={() => navigate({ to: "/clinics" })} />
           <Button onClick={save}><Save className="mr-2 h-4 w-4" /> Save</Button>
         </div>
       </div>
@@ -139,6 +143,52 @@ function ClinicDetail() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function DeleteClinicDialog({ clinicId, clinicName, onDeleted }: { clinicId: string; clinicName: string; onDeleted: () => void }) {
+  const qc = useQueryClient();
+  const [confirmName, setConfirmName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const matches = confirmName.trim() === clinicName;
+
+  const del = async () => {
+    if (!matches) return;
+    setBusy(true);
+    const { error } = await supabase.from("clinics").delete().eq("id", clinicId);
+    setBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Lead deleted");
+    qc.invalidateQueries({ queryKey: ["clinics"] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onDeleted();
+  };
+
+  return (
+    <AlertDialog onOpenChange={(open) => { if (!open) setConfirmName(""); }}>
+      <AlertDialogTrigger asChild>
+        <Button variant="destructive"><Trash2 className="mr-2 h-4 w-4" /> Delete</Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes the clinic, staff, socials, and outreach history. Type the lead title to confirm.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-2">
+          <Label>Lead title</Label>
+          <Input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={clinicName} />
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button variant="destructive" disabled={!matches || busy} onClick={del}>Delete Lead</Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -310,6 +360,18 @@ function toLocalInput(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+type TargetOption = { value: string; label: string; kind: string; detail: string; staffId?: string | null };
+
+function optionValue(option: Omit<TargetOption, "value">) {
+  return [option.kind, option.label, option.detail, option.staffId ?? ""].map(encodeURIComponent).join("|");
+}
+
+function parseOption(value: string): TargetOption | null {
+  const [kind, label, detail, staffId] = value.split("|").map((part) => decodeURIComponent(part ?? ""));
+  if (!kind || !label) return null;
+  return { value, kind, label, detail, staffId: staffId || null };
+}
+
 function OutreachTab({ clinicId }: { clinicId: string }) {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
@@ -320,34 +382,112 @@ function OutreachTab({ clinicId }: { clinicId: string }) {
       return data;
     },
   });
+  const { data: clinic } = useQuery({
+    queryKey: ["clinic-outreach-contacts", clinicId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("clinics").select("clinic_name,email_primary,email_secondary,phone_primary,phone_secondary").eq("id", clinicId).maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+  const { data: staff = [] } = useQuery({
+    queryKey: ["staff", clinicId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("staff").select("*").eq("clinic_id", clinicId).order("created_at");
+      if (error) throw error;
+      return data as StaffRow[];
+    },
+  });
+  const { data: socials = [] } = useQuery({
+    queryKey: ["outreach-socials", clinicId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("socials").select("id,platform,url,staff_id").eq("clinic_id", clinicId);
+      if (error) throw error;
+      return data;
+    },
+  });
+  const { data: customTypes = [] } = useQuery({
+    queryKey: ["outreach-types"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("user_outreach_types").select("name").order("name");
+      if (error) throw error;
+      return data.map((row) => row.name);
+    },
+  });
   const [open, setOpen] = useState(false);
-  const [o, setO] = useState({ type: "Email", notes: "", outcome: "", date_logged: toLocalInput(new Date()) });
+  const [o, setO] = useState({ type: "Email", target: "", notes: "", outcome: "", date_logged: toLocalInput(new Date()) });
+  const outreachTypes = Array.from(new Set([...DEFAULT_OUTREACH_TYPES, ...customTypes]));
+  const targetOptions = getTargetOptions(o.type, clinic, staff, socials);
   useEffect(() => { if (open) setO((p) => ({ ...p, date_logged: toLocalInput(new Date()) })); }, [open]);
+  useEffect(() => {
+    if (o.target && !targetOptions.some((option) => option.value === o.target)) {
+      setO((p) => ({ ...p, target: "" }));
+    }
+  }, [o.target, targetOptions]);
 
   const add = async () => {
-    const payload = { type: o.type, notes: o.notes, outcome: o.outcome, clinic_id: clinicId, date_logged: new Date(o.date_logged).toISOString() };
+    const selected = parseOption(o.target);
+    const payload = {
+      type: o.type,
+      notes: o.notes || null,
+      outcome: o.outcome || null,
+      clinic_id: clinicId,
+      staff_id: selected?.staffId || null,
+      target_kind: selected?.kind || null,
+      target_label: selected?.label || null,
+      contact_detail: selected?.detail || null,
+      date_logged: new Date(o.date_logged).toISOString(),
+    };
     const { error } = await supabase.from("outreach_timeline").insert(payload);
-    if (error) toast.error(error.message); else { toast.success("Logged"); setOpen(false); setO({ type: "Email", notes: "", outcome: "", date_logged: toLocalInput(new Date()) }); qc.invalidateQueries({ queryKey: ["outreach", clinicId] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); }
+    if (error) toast.error(error.message); else { toast.success("Logged"); setOpen(false); setO({ type: "Email", target: "", notes: "", outcome: "", date_logged: toLocalInput(new Date()) }); qc.invalidateQueries({ queryKey: ["outreach", clinicId] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); }
   };
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><Button size="sm"><Plus className="mr-1 h-4 w-4" /> Log Outreach</Button></DialogTrigger>
-          <DialogContent>
-            <DialogHeader><DialogTitle>New Outreach Log</DialogTitle></DialogHeader>
-            <div className="space-y-3">
-              <div><Label>Type</Label>
-                <Select value={o.type} onValueChange={(v) => setO({ ...o, type: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{["Email", "Call", "LinkedIn", "Meeting", "DM", "Other"].map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+          <DialogContent className="max-w-md">
+            <DialogHeader><DialogTitle>Log Outreach</DialogTitle></DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label className="text-xs uppercase tracking-wide">Contact Method</Label>
+                <Select value={o.type} onValueChange={(v) => setO({ ...o, type: v, target: "" })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>{outreachTypes.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div><Label>Date &amp; Time</Label><Input type="datetime-local" value={o.date_logged} onChange={(e) => setO({ ...o, date_logged: e.target.value })} /></div>
-              <div><Label>Outcome</Label><Input value={o.outcome} onChange={(e) => setO({ ...o, outcome: e.target.value })} /></div>
-              <div><Label>Notes</Label><Textarea rows={3} value={o.notes} onChange={(e) => setO({ ...o, notes: e.target.value })} /></div>
+              <div>
+                <Label className="text-xs uppercase tracking-wide">Contacted</Label>
+                <p className="text-xs text-muted-foreground mt-0.5 mb-2">Who did you contact?</p>
+                <Select value={o.target} onValueChange={(v) => setO({ ...o, target: v })}>
+                  <SelectTrigger><SelectValue placeholder="Select a contact..." /></SelectTrigger>
+                  <SelectContent>
+                    {targetOptions.length === 0 ? (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">No contacts available for this method</div>
+                    ) : (
+                      targetOptions.map((target) => (
+                        <SelectItem key={target.value} value={target.value}>
+                          {target.label}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs uppercase tracking-wide">Date &amp; Time</Label>
+                <Input type="datetime-local" className="mt-1" value={o.date_logged} onChange={(e) => setO({ ...o, date_logged: e.target.value })} />
+              </div>
+              <div>
+                <Label className="text-xs uppercase tracking-wide">Outcome (optional)</Label>
+                <Input className="mt-1" placeholder="e.g., Interested, Not interested, Left voicemail" value={o.outcome} onChange={(e) => setO({ ...o, outcome: e.target.value })} />
+              </div>
+              <div>
+                <Label className="text-xs uppercase tracking-wide">Notes (optional)</Label>
+                <Textarea rows={3} className="mt-1" placeholder="Any details about the outreach..." value={o.notes} onChange={(e) => setO({ ...o, notes: e.target.value })} />
+              </div>
             </div>
-            <DialogFooter><Button onClick={add}>Save</Button></DialogFooter>
+            <DialogFooter><Button onClick={add} className="w-full">Save Outreach</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
@@ -358,10 +498,17 @@ function OutreachTab({ clinicId }: { clinicId: string }) {
               <span className="absolute -left-[27px] top-2 h-2.5 w-2.5 rounded-full bg-primary ring-4 ring-background" />
               <div className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="text-sm font-medium">{r.type}{r.outcome && <span className="ml-2 text-muted-foreground font-normal">· {r.outcome}</span>}</div>
+                  <div className="text-sm font-medium">{r.type}</div>
                   <div className="text-xs text-muted-foreground">{format(new Date(r.date_logged), "MMM d, yyyy HH:mm")}</div>
                 </div>
-                {r.notes && <p className="mt-1 text-sm text-muted-foreground whitespace-pre-wrap">{r.notes}</p>}
+                {r.target_label && (
+                  <div className="mt-2 text-xs bg-muted px-2 py-1 rounded w-fit">
+                    <span className="font-medium">{r.target_label}</span>
+                    {r.contact_detail && <span className="text-muted-foreground"> · {r.contact_detail}</span>}
+                  </div>
+                )}
+                {r.outcome && <div className="mt-2 text-sm text-muted-foreground"><span className="font-medium">Outcome:</span> {r.outcome}</div>}
+                {r.notes && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{r.notes}</p>}
               </div>
             </li>
           ))}
@@ -369,4 +516,38 @@ function OutreachTab({ clinicId }: { clinicId: string }) {
       )}
     </div>
   );
+}
+
+function getTargetOptions(type: string, clinic: { clinic_name: string; email_primary: string | null; email_secondary: string | null; phone_primary: string | null; phone_secondary: string | null } | null | undefined, staff: StaffRow[], socials: { platform: string; url: string; staff_id: string | null }[]): TargetOption[] {
+  const options: Omit<TargetOption, "value">[] = [];
+  const method = type.toLowerCase();
+  const staffById = new Map(staff.map((member) => [member.id, member]));
+  const add = (kind: string, label: string, detail: string, staffId?: string | null) => {
+    if (detail) options.push({ kind, label, detail, staffId });
+  };
+
+  if (method === "email") {
+    add("business_email", "Business email (primary)", clinic?.email_primary ?? "");
+    add("business_email", "Business email (secondary)", clinic?.email_secondary ?? "");
+    staff.forEach((member) => add("staff_email", `${member.full_name} email`, member.email ?? "", member.id));
+  } else if (method === "call" || method === "cold calling" || method === "whatsapp") {
+    add("business_phone", "Business phone (primary)", clinic?.phone_primary ?? "");
+    add("business_phone", "Business phone (secondary)", clinic?.phone_secondary ?? "");
+  } else if (["linkedin", "facebook", "instagram"].includes(method)) {
+    const platform = type === "LinkedIn" ? "LinkedIn" : type;
+    socials.filter((social) => social.platform === platform).forEach((social) => {
+      const member = social.staff_id ? staffById.get(social.staff_id) : null;
+      add(social.staff_id ? "staff_social" : "business_social", member ? `${member.full_name} ${platform}` : `Business ${platform}`, social.url, social.staff_id);
+    });
+  } else {
+    add("business_email", "Business email (primary)", clinic?.email_primary ?? "");
+    add("business_phone", "Business phone (primary)", clinic?.phone_primary ?? "");
+    socials.forEach((social) => {
+      const member = social.staff_id ? staffById.get(social.staff_id) : null;
+      add(social.staff_id ? "staff_social" : "business_social", member ? `${member.full_name} ${social.platform}` : `Business ${social.platform}`, social.url, social.staff_id);
+    });
+    staff.forEach((member) => add("staff_email", `${member.full_name} email`, member.email ?? "", member.id));
+  }
+
+  return options.map((option) => ({ ...option, value: optionValue(option) }));
 }

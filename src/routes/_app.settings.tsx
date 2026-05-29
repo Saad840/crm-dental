@@ -1,10 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Copy } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/lib/auth";
+import { Copy, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/settings")({
@@ -75,6 +79,72 @@ function syncToCRM() {
           </div>
         </CardContent>
       </Card>
+
+      <OutreachTypesCard />
     </div>
+  );
+}
+
+function OutreachTypesCard() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [name, setName] = useState("");
+  const { data = [], isLoading } = useQuery({
+    queryKey: ["outreach-types"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("user_outreach_types").select("id,name").order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const add = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || !user) return;
+    const { error } = await supabase.from("user_outreach_types").insert({ name: trimmed, user_id: user.id });
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Outreach type added");
+      setName("");
+      qc.invalidateQueries({ queryKey: ["outreach-types"] });
+    }
+  };
+
+  const del = async (id: string) => {
+    const { error } = await supabase.from("user_outreach_types").delete().eq("id", id);
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Outreach type removed");
+      qc.invalidateQueries({ queryKey: ["outreach-types"] });
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Outreach Types</CardTitle>
+        <CardDescription>Built-in options include Email, Call, LinkedIn, Facebook, Instagram, and WhatsApp. Add extra methods here.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex gap-2">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Example: Cold calling" />
+          <Button onClick={add} disabled={!name.trim()}><Plus className="mr-2 h-4 w-4" /> Add</Button>
+        </div>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : data.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No custom outreach types yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {data.map((type) => (
+              <li key={type.id} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                <span>{type.name}</span>
+                <Button size="icon" variant="ghost" onClick={() => del(type.id)}><Trash2 className="h-4 w-4" /></Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
